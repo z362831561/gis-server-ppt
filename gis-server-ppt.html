@@ -1,0 +1,2488 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>从零开始实现一个GIS Server</title>
+    
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Mapbox GL JS -->
+    <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
+    <script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
+    
+    <!-- OpenLayers -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css">
+    <script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js"></script>
+    
+    <!-- Cesium -->
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.110/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.110/Build/Cesium/Cesium.js"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Microsoft YaHei', 'Arial', sans-serif;
+            background: #1a1a1a;
+            color: #333;
+            overflow: hidden;
+        }
+        
+        .slide {
+            width: 100vw;
+            height: 100vh;
+            display: none;
+            position: relative;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 60px;
+            overflow: hidden;
+        }
+        
+        .slide.active {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            animation: slideIn 0.5s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        .slide-title {
+            background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .slide-content {
+            background: white;
+            border-radius: 10px;
+            padding: 40px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        
+        h1 {
+            font-size: 3em;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        h2 {
+            font-size: 2.5em;
+            color: #667eea;
+            margin-bottom: 30px;
+        }
+        
+        h3 {
+            font-size: 1.8em;
+            color: #764ba2;
+            margin: 20px 0;
+        }
+        
+        p {
+            font-size: 1.2em;
+            line-height: 1.8;
+            margin-bottom: 15px;
+        }
+        
+        ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        li {
+            font-size: 1.2em;
+            margin: 15px 0;
+            padding-left: 30px;
+            position: relative;
+        }
+        
+        li:before {
+            content: "▶";
+            position: absolute;
+            left: 0;
+            color: #667eea;
+        }
+        
+        .code-block {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-family: 'Consolas', 'Monaco', monospace;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 0.9em;
+            line-height: 1.6;
+        }
+        
+        .navigation {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            display: flex;
+            gap: 15px;
+            z-index: 1000;
+        }
+        
+        .nav-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-size: 1.1em;
+            transition: all 0.3s;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .nav-btn:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+            box-shadow: 0 7px 20px rgba(0,0,0,0.3);
+        }
+        
+        .nav-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .slide-number {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(102, 126, 234, 0.1);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .cover-slide {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+        }
+        
+        .cover-slide h1 {
+            font-size: 4em;
+            margin-bottom: 30px;
+        }
+        
+        .cover-slide p {
+            font-size: 1.5em;
+        }
+        
+        .image-placeholder {
+            background: linear-gradient(135deg, #e0e0e0 0%, #f0f0f0 100%);
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            color: #999;
+            margin: 20px 0;
+        }
+        
+        .two-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+        
+        .map-container {
+            height: 400px;
+            width: 100%;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            margin: 20px 0;
+            position: relative;
+            background: #f0f0f0;
+        }
+        
+        .map-container:before {
+            content: "地图加载中...";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #999;
+            font-size: 1.2em;
+            z-index: 0;
+        }
+        
+        .split-layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            height: 100%;
+        }
+        
+        .code-section {
+            overflow-y: auto;
+        }
+        
+        #cesiumContainer .cesium-widget-credits {
+            display: none !important;
+        }
+        
+        #cesiumContainer {
+            position: relative;
+        }
+        
+        .cesium-viewer .cesium-widget-credits {
+            display: none !important;
+        }
+        
+        .leaflet-container, .ol-viewport, .mapboxgl-map, .cesium-viewer {
+            background: white;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .ol-control {
+            background-color: rgba(255,255,255,.4);
+        }
+        
+        .ol-control button {
+            background-color: rgba(0,60,136,.5);
+        }
+        
+        .ol-control button:hover {
+            background-color: rgba(0,60,136,.7);
+        }
+    </style>
+</head>
+<body>
+    <!-- 第1页：封面 -->
+    <div class="slide active cover-slide">
+        <h1>从零开始实现一个GIS Server</h1>
+        <p>构建现代化地理信息服务系统</p>
+        <p style="margin-top: 50px; font-size: 1.2em;">基于Spring Boot + PostGIS + OGC标准</p>
+    </div>
+
+    <!-- 第2页：目录 -->
+    <div class="slide">
+        <div class="slide-number">2/60</div>
+        <div class="slide-title">
+            <h2>课程大纲</h2>
+        </div>
+        <div class="slide-content two-column">
+            <div>
+                <h3>基础概念篇</h3>
+                <ul>
+                    <li>第一章：GIS Server介绍</li>
+                    <li>第二章：前端GIS组件库</li>
+                </ul>
+                <h3>基础知识篇</h3>
+                <ul>
+                    <li>第三章：空间数据库</li>
+                    <li>第四章：Spring Boot介绍</li>
+                    <li>第五章：Spring Data JPA</li>
+                </ul>
+            </div>
+            <div>
+                <h3>实现篇</h3>
+                <ul>
+                    <li>第六章：空间数据存储</li>
+                    <li>第七章：OGC地图服务</li>
+                    <li>第八章：地理编码</li>
+                    <li>第九章：网络分析</li>
+                    <li>第十章：空间分析服务</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第3页：第一章标题页 -->
+    <div class="slide">
+        <div class="slide-number">3/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center;">
+            <div>
+                <h1>第一章</h1>
+                <h2 style="color: white; margin-top: 30px;">GIS Server介绍</h2>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第4页：1.1 什么是GIS Server -->
+    <div class="slide">
+        <div class="slide-number">4/60</div>
+        <div class="slide-title">
+            <h2>1.1 什么是GIS Server</h2>
+        </div>
+        <div class="slide-content">
+            <h3>GIS Server定义</h3>
+            <p>GIS Server（地理信息系统服务器）是一种专门用于发布、管理和分析地理空间数据的服务器软件。</p>
+            
+            <h3>核心功能</h3>
+            <ul>
+                <li>地图服务发布：将地理数据以标准化的方式发布为网络服务</li>
+                <li>空间数据管理：存储、索引和管理矢量、栅格等空间数据</li>
+                <li>空间分析处理：提供缓冲区分析、叠加分析等GIS功能</li>
+                <li>数据共享协作：支持多用户并发访问和数据共享</li>
+            </ul>
+            
+            <h3>技术架构</h3>
+            <div class="image-placeholder">
+                [GIS Server架构图：客户端 → Web服务器 → GIS Server → 空间数据库]
+            </div>
+        </div>
+    </div>
+
+    <!-- 第5页：1.2 GIS Server发展历史 -->
+    <div class="slide">
+        <div class="slide-number">5/60</div>
+        <div class="slide-title">
+            <h2>1.2 GIS Server发展历史</h2>
+        </div>
+        <div class="slide-content">
+            <h3>发展阶段</h3>
+            <ul>
+                <li><strong>1990s：</strong>桌面GIS时代，以ArcInfo、MapInfo为代表</li>
+                <li><strong>2000s：</strong>Web GIS兴起，出现ArcIMS、MapServer等</li>
+                <li><strong>2010s：</strong>云GIS发展，支持大数据和分布式计算</li>
+                <li><strong>2020s：</strong>智能GIS时代，融合AI、IoT等新技术</li>
+            </ul>
+            
+            <h3>技术演进</h3>
+            <ul>
+                <li>从C/S架构到B/S架构</li>
+                <li>从单机部署到分布式集群</li>
+                <li>从二维地图到三维场景</li>
+                <li>从静态服务到实时动态服务</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第6页：1.3 ESRI ArcGIS Server -->
+    <div class="slide">
+        <div class="slide-number">6/60</div>
+        <div class="slide-title">
+            <h2>1.3 ESRI ArcGIS Server</h2>
+        </div>
+        <div class="slide-content">
+            <h3>产品概述</h3>
+            <p>ArcGIS Server是ESRI公司的企业级GIS服务器产品，市场占有率最高的商业GIS Server。</p>
+            
+            <h3>核心特性</h3>
+            <ul>
+                <li>完整的GIS功能：支持2D/3D地图、空间分析、地理处理等</li>
+                <li>多种服务类型：地图服务、要素服务、影像服务、地理处理服务</li>
+                <li>企业级架构：支持集群部署、负载均衡、高可用性</li>
+                <li>丰富的API：REST API、SOAP API、JavaScript API</li>
+            </ul>
+            
+            <h3>技术架构</h3>
+            <ul>
+                <li>Web Adaptor：Web服务器适配器</li>
+                <li>GIS Server：核心服务引擎</li>
+                <li>Data Store：空间大数据存储</li>
+                <li>Portal：Web门户组件</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第7页：1.4 超图IServer -->
+    <div class="slide">
+        <div class="slide-number">7/60</div>
+        <div class="slide-title">
+            <h2>1.4 超图IServer</h2>
+        </div>
+        <div class="slide-content">
+            <h3>产品特色</h3>
+            <p>SuperMap iServer是超图软件的云GIS服务器产品，国产GIS软件的领导者。</p>
+            
+            <h3>技术优势</h3>
+            <ul>
+                <li>跨平台支持：Windows、Linux、Unix等多种操作系统</li>
+                <li>微服务架构：支持容器化部署和微服务拆分</li>
+                <li>大数据GIS：集成Spark、Hadoop等大数据技术</li>
+                <li>自主可控：完全自主知识产权，支持国产化替代</li>
+            </ul>
+            
+            <h3>服务能力</h3>
+            <ul>
+                <li>REST服务：标准化的RESTful接口</li>
+                <li>OGC服务：WMS、WFS、WMTS、WCS等</li>
+                <li>分布式分析：支持分布式空间分析和计算</li>
+                <li>三维服务：支持3D Tiles、S3M等三维数据服务</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第8页：1.5 MapGIS IGServer -->
+    <div class="slide">
+        <div class="slide-number">8/60</div>
+        <div class="slide-title">
+            <h2>1.5 MapGIS IGServer</h2>
+        </div>
+        <div class="slide-content">
+            <h3>产品定位</h3>
+            <p>MapGIS IGServer是中地数码的企业级GIS服务平台，面向行业应用的专业GIS服务器。</p>
+            
+            <h3>核心功能</h3>
+            <ul>
+                <li>全空间数据模型：支持地上、地表、地下一体化</li>
+                <li>多源数据集成：兼容主流GIS数据格式</li>
+                <li>专业分析功能：地质分析、矿产分析等行业特色功能</li>
+                <li>云端一体化：支持公有云、私有云、混合云部署</li>
+            </ul>
+            
+            <h3>应用领域</h3>
+            <ul>
+                <li>自然资源管理</li>
+                <li>地质矿产勘探</li>
+                <li>智慧城市建设</li>
+                <li>应急管理指挥</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第9页：1.6 GeoServer -->
+    <div class="slide">
+        <div class="slide-number">9/60</div>
+        <div class="slide-title">
+            <h2>1.6 GeoServer</h2>
+        </div>
+        <div class="slide-content">
+            <h3>开源GIS Server代表</h3>
+            <p>GeoServer是最流行的开源GIS服务器，基于Java开发，遵循OGC标准。</p>
+            
+            <h3>技术特点</h3>
+            <ul>
+                <li>完全开源：基于GPL协议，社区活跃</li>
+                <li>标准兼容：严格遵循OGC标准规范</li>
+                <li>易于扩展：插件机制，支持二次开发</li>
+                <li>跨平台部署：支持各种操作系统和应用服务器</li>
+            </ul>
+            
+            <h3>支持的服务</h3>
+            <ul>
+                <li>WMS 1.1.1, 1.3.0</li>
+                <li>WFS 1.0.0, 1.1.0, 2.0.0</li>
+                <li>WCS 1.0.0, 1.1.1, 2.0.1</li>
+                <li>WPS 1.0.0</li>
+                <li>支持REST API</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第10页：第二章标题页 -->
+    <div class="slide">
+        <div class="slide-number">10/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center;">
+            <div>
+                <h1>第二章</h1>
+                <h2 style="color: white; margin-top: 30px;">前端GIS组件库</h2>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第11页：2.1 GIS的前后端分离 -->
+    <div class="slide">
+        <div class="slide-number">11/60</div>
+        <div class="slide-title">
+            <h2>2.1 GIS的前后端分离</h2>
+        </div>
+        <div class="slide-content">
+            <h3>架构演进</h3>
+            <p>从传统的服务端渲染到现代的前后端分离架构，GIS应用架构发生了重大变革。</p>
+            
+            <h3>前后端分离优势</h3>
+            <ul>
+                <li>前端独立部署，提高开发效率</li>
+                <li>更好的用户体验，减少服务器压力</li>
+                <li>技术栈灵活，前后端可独立选型</li>
+                <li>支持多端复用（Web、移动端、桌面端）</li>
+            </ul>
+            
+            <h3>前端GIS组件库分类</h3>
+            <ul>
+                <li>轻量级：Leaflet（移动优先）</li>
+                <li>功能全面：OpenLayers（PC端）</li>
+                <li>可视化强：Mapbox GL JS（矢量瓦片）</li>
+                <li>三维GIS：CesiumJS（真三维）</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第12页：2.2 移动端WebGIS——Leaflet -->
+    <div class="slide">
+        <div class="slide-number">12/60</div>
+        <div class="slide-title">
+            <h2>2.2 移动端WebGIS——Leaflet</h2>
+        </div>
+        <div class="slide-content">
+            <div class="split-layout">
+                <div class="code-section">
+                    <h3>Leaflet特点</h3>
+                    <ul>
+                        <li>轻量级：核心库仅38KB</li>
+                        <li>移动友好：专为移动设备优化</li>
+                        <li>简单易用：API设计简洁直观</li>
+                        <li>插件丰富：强大的插件生态系统</li>
+                    </ul>
+                    
+                    <h3>基础示例</h3>
+                    <div class="code-block">
+// 创建地图
+var map = L.map('leafletMap').setView([39.9, 116.4], 10);
+
+// 添加底图
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+// 添加标记
+L.marker([39.9, 116.4]).addTo(map)
+    .bindPopup('北京').openPopup();
+
+// 添加圆形
+L.circle([39.95, 116.35], {
+    color: 'red',
+    fillColor: '#f03',
+    fillOpacity: 0.5,
+    radius: 5000
+}).addTo(map);
+                    </div>
+                </div>
+                <div>
+                    <h3>实时地图演示</h3>
+                    <div id="leafletMap" class="map-container"></div>
+                    <p style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                        移动端优化的轻量级地图，支持触摸手势操作
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第13页：2.3 PC端WebGIS——OpenLayers -->
+    <div class="slide">
+        <div class="slide-number">13/60</div>
+        <div class="slide-title">
+            <h2>2.3 PC端WebGIS——OpenLayers</h2>
+        </div>
+        <div class="slide-content">
+            <div class="split-layout">
+                <div class="code-section">
+                    <h3>OpenLayers优势</h3>
+                    <ul>
+                        <li>功能完整：支持各种GIS功能</li>
+                        <li>标准支持：完整支持OGC标准</li>
+                        <li>投影支持：内置坐标系统转换</li>
+                        <li>渲染性能：Canvas和WebGL</li>
+                    </ul>
+                    
+                    <h3>代码示例</h3>
+                    <div class="code-block">
+const map = new ol.Map({
+    target: 'openlayersMap',
+    layers: [
+        new ol.layer.Tile({
+            source: new ol.source.OSM()
+        }),
+        new ol.layer.Vector({
+            source: new ol.source.Vector({
+                features: [
+                    new ol.Feature({
+                        geometry: new ol.geom.Point(
+                            ol.proj.fromLonLat([116.4, 39.9])
+                        )
+                    })
+                ]
+            }),
+            style: new ol.style.Style({
+                image: new ol.style.Circle({
+                    radius: 8,
+                    fill: new ol.style.Fill({color: 'red'}),
+                    stroke: new ol.style.Stroke({
+                        color: 'white', width: 2
+                    })
+                })
+            })
+        })
+    ],
+    view: new ol.View({
+        center: ol.proj.fromLonLat([116.4, 39.9]),
+        zoom: 10
+    })
+});
+
+// 添加交互控件
+map.addControl(new ol.control.FullScreen());
+map.addControl(new ol.control.ScaleLine());
+                    </div>
+                </div>
+                <div>
+                    <h3>功能演示</h3>
+                    <div id="openlayersMap" class="map-container"></div>
+                    <p style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                        功能强大的PC端地图库，支持复杂的GIS操作
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第14页：2.4 打造世界上最好看的地图——Mapbox GL JS -->
+    <div class="slide">
+        <div class="slide-number">14/60</div>
+        <div class="slide-title">
+            <h2>2.4 打造世界上最好看的地图——Mapbox GL JS</h2>
+        </div>
+        <div class="slide-content">
+            <div class="split-layout">
+                <div class="code-section">
+                    <h3>技术特色</h3>
+                    <ul>
+                        <li>矢量瓦片：支持MVT格式</li>
+                        <li>WebGL渲染：GPU加速</li>
+                        <li>样式定制：Mapbox Style规范</li>
+                        <li>平滑交互：60fps流畅体验</li>
+                    </ul>
+                    
+                    <h3>代码示例</h3>
+                    <div class="code-block">
+mapboxgl.accessToken = "访问token";
+const map = new mapboxgl.Map({
+    container: 'mapboxMap',
+    style: {
+        version: 8,
+        sources: {
+            'osm': {
+                type: 'raster',
+                tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                tileSize: 256
+            }
+        },
+        layers: [{
+            id: 'osm',
+            type: 'raster',
+            source: 'osm'
+        }]
+    },
+    center: [116.4, 39.9],
+    zoom: 10,
+    pitch: 45
+});
+
+// 添加导航控件
+map.addControl(new mapboxgl.NavigationControl());
+
+// 添加标记
+new mapboxgl.Marker()
+    .setLngLat([116.4, 39.9])
+    .setPopup(new mapboxgl.Popup().setHTML('<h3>北京</h3>'))
+    .addTo(map);
+                    </div>
+                </div>
+                <div>
+                    <h3>矢量地图演示</h3>
+                    <div id="mapboxMap" class="map-container"></div>
+                    <p style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                        WebGL渲染的矢量地图，支持平滑缩放和旋转
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第15页：2.5 真三维WebGIS——CesiumJS -->
+    <div class="slide">
+        <div class="slide-number">15/60</div>
+        <div class="slide-title">
+            <h2>2.5 真三维WebGIS——CesiumJS</h2>
+        </div>
+        <div class="slide-content">
+            <div class="split-layout">
+                <div class="code-section">
+                    <h3>三维GIS能力</h3>
+                    <ul>
+                        <li>真实地球：WGS84椭球体模型</li>
+                        <li>地形支持：全球地形数据</li>
+                        <li>时态数据：时间动态可视化</li>
+                        <li>3D Tiles：大规模三维数据</li>
+                    </ul>
+                    
+                    <h3>初始化代码</h3>
+                    <div class="code-block">
+// 设置Ion访问令牌
+Cesium.Ion.defaultAccessToken = 'your_token';
+
+// 创建三维地球
+const viewer = new Cesium.Viewer('cesiumContainer', {
+    terrainProvider: Cesium.createWorldTerrain(),
+    homeButton: false,
+    sceneModePicker: false,
+    baseLayerPicker: false,
+    navigationHelpButton: false,
+    animation: false,
+    timeline: false,
+    fullscreenButton: false,
+    vrButton: false
+});
+
+// 飞行到北京
+viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(
+        116.4, 39.9, 50000
+    ),
+    orientation: {
+        heading: Cesium.Math.toRadians(0),
+        pitch: Cesium.Math.toRadians(-45),
+        roll: 0.0
+    }
+});
+
+// 添加3D建筑物
+const buildings = viewer.scene.primitives.add(
+    Cesium.createOsmBuildings()
+);
+                    </div>
+                </div>
+                <div>
+                    <h3>三维地球演示</h3>
+                    <div id="cesiumContainer" class="map-container"></div>
+                    <p style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                        真三维地球，支持地形、建筑物和时空数据可视化
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第16页：基础知识篇标题页 -->
+    <div class="slide">
+        <div class="slide-number">16/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+            <div>
+                <h1>基础知识篇</h1>
+                <p style="font-size: 1.5em; margin-top: 30px;">空间数据库 · Spring Boot · JPA</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第17页：第三章标题页 -->
+    <div class="slide">
+        <div class="slide-number">17/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center;">
+            <div>
+                <h1>第三章</h1>
+                <h2 style="color: white; margin-top: 30px;">空间数据库</h2>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第18页：3.1 PostgreSQL介绍 -->
+    <div class="slide">
+        <div class="slide-number">18/60</div>
+        <div class="slide-title">
+            <h2>3.1 PostgreSQL介绍</h2>
+        </div>
+        <div class="slide-content">
+            <h3>PostgreSQL特性</h3>
+            <ul>
+                <li>开源关系型数据库，功能最强大的开源数据库</li>
+                <li>ACID事务支持，保证数据一致性</li>
+                <li>丰富的数据类型：JSON、数组、范围类型等</li>
+                <li>强大的扩展机制，支持自定义函数和类型</li>
+            </ul>
+            
+            <h3>为什么选择PostgreSQL做GIS？</h3>
+            <ul>
+                <li>PostGIS扩展：最成熟的空间数据库扩展</li>
+                <li>性能优异：空间索引和查询优化</li>
+                <li>标准支持：OGC Simple Features规范</li>
+                <li>社区活跃：持续更新和技术支持</li>
+            </ul>
+            
+            <h3>版本选择</h3>
+            <p>推荐使用PostgreSQL 13+版本，配合PostGIS 3.0+，获得最佳性能和功能支持。</p>
+        </div>
+    </div>
+
+    <!-- 第19页：3.2 PostGIS与PostgreSQL -->
+    <div class="slide">
+        <div class="slide-number">19/60</div>
+        <div class="slide-title">
+            <h2>3.2 PostGIS与PostgreSQL</h2>
+        </div>
+        <div class="slide-content">
+            <h3>PostGIS是什么？</h3>
+            <p>PostGIS是PostgreSQL的空间数据库扩展，添加了对地理对象的支持。</p>
+            
+            <h3>PostGIS核心组件</h3>
+            <ul>
+                <li>空间类型：geometry、geography</li>
+                <li>空间函数：几千个GIS分析函数</li>
+                <li>空间索引：R-Tree、GiST索引</li>
+                <li>栅格支持：PostGIS Raster</li>
+                <li>拓扑支持：PostGIS Topology</li>
+            </ul>
+            
+            <h3>安装PostGIS</h3>
+            <div class="code-block">
+-- 创建扩展
+CREATE EXTENSION postgis;
+CREATE EXTENSION postgis_topology;
+CREATE EXTENSION postgis_raster;
+
+-- 查看版本
+SELECT PostGIS_Version();
+            </div>
+        </div>
+    </div>
+
+    <!-- 第20页：3.3 PostGIS空间数据类型 -->
+    <div class="slide">
+        <div class="slide-number">20/60</div>
+        <div class="slide-title">
+            <h2>3.3 PostGIS空间数据类型</h2>
+        </div>
+        <div class="slide-content">
+            <h3>Geometry类型体系</h3>
+            <ul>
+                <li>Point：点</li>
+                <li>LineString：线串</li>
+                <li>Polygon：多边形</li>
+                <li>MultiPoint：多点</li>
+                <li>MultiLineString：多线串</li>
+                <li>MultiPolygon：多多边形</li>
+                <li>GeometryCollection：几何集合</li>
+            </ul>
+            
+            <h3>Geometry vs Geography</h3>
+            <div class="two-column">
+                <div>
+                    <h4>Geometry（平面坐标）</h4>
+                    <ul>
+                        <li>笛卡尔坐标系</li>
+                        <li>计算速度快</li>
+                        <li>适合小范围</li>
+                    </ul>
+                </div>
+                <div>
+                    <h4>Geography（球面坐标）</h4>
+                    <ul>
+                        <li>球面坐标系</li>
+                        <li>计算准确</li>
+                        <li>适合大范围</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <h3>创建空间表</h3>
+            <div class="code-block">
+CREATE TABLE cities (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100),
+    geom GEOMETRY(Point, 4326)
+);
+            </div>
+        </div>
+    </div>
+
+    <!-- 第21页：3.4 PostGIS空间数据索引 -->
+    <div class="slide">
+        <div class="slide-number">21/60</div>
+        <div class="slide-title">
+            <h2>3.4 PostGIS空间数据索引</h2>
+        </div>
+        <div class="slide-content">
+            <h3>空间索引原理</h3>
+            <p>空间索引使用R-Tree结构，通过最小边界矩形（MBR）组织空间对象。</p>
+            
+            <h3>创建空间索引</h3>
+            <div class="code-block">
+-- 创建GiST索引
+CREATE INDEX idx_cities_geom ON cities USING GIST (geom);
+
+-- 创建BRIN索引（适合有序数据）
+CREATE INDEX idx_cities_geom_brin ON cities USING BRIN (geom);
+
+-- 更新统计信息
+VACUUM ANALYZE cities;
+            </div>
+            
+            <h3>空间索引使用场景</h3>
+            <ul>
+                <li>空间关系查询：ST_Intersects、ST_Contains</li>
+                <li>最近邻查询：ORDER BY geom <-> point</li>
+                <li>边界框查询：&& 操作符</li>
+                <li>缓冲区查询：ST_DWithin</li>
+            </ul>
+            
+            <h3>性能对比</h3>
+            <p>使用空间索引可以将查询性能提升100-1000倍，特别是在大数据量场景下。</p>
+        </div>
+    </div>
+
+    <!-- 第22页：3.5 PostgreSQL与PostGIS的安装 -->
+    <div class="slide">
+        <div class="slide-number">22/60</div>
+        <div class="slide-title">
+            <h2>3.5 PostgreSQL与PostGIS的安装</h2>
+        </div>
+        <div class="slide-content">
+            <h3>安装方式</h3>
+            <div class="two-column">
+                <div>
+                    <h4>Ubuntu/Debian</h4>
+                    <div class="code-block">
+# 安装PostgreSQL
+sudo apt update
+sudo apt install postgresql-14
+
+# 安装PostGIS
+sudo apt install postgis
+sudo apt install postgresql-14-postgis-3
+                    </div>
+                </div>
+                <div>
+                    <h4>Docker方式</h4>
+                    <div class="code-block">
+# 拉取镜像
+docker pull postgis/postgis:14-3.2
+
+# 运行容器
+docker run -d \
+  --name postgis \
+  -e POSTGRES_PASSWORD=postgres \
+  -p 5432:5432 \
+  postgis/postgis:14-3.2
+                    </div>
+                </div>
+            </div>
+            
+            <h3>初始化配置</h3>
+            <div class="code-block">
+-- 创建空间数据库
+CREATE DATABASE gisdb;
+\c gisdb
+CREATE EXTENSION postgis;
+            </div>
+        </div>
+    </div>
+
+    <!-- 第23页：3.6 PostGIS的空间SQL扩展 -->
+    <div class="slide">
+        <div class="slide-number">23/60</div>
+        <div class="slide-title">
+            <h2>3.6 PostGIS的空间SQL扩展</h2>
+        </div>
+        <div class="slide-content">
+            <h3>常用空间函数分类</h3>
+            <ul>
+                <li><strong>构造函数：</strong>ST_GeomFromText、ST_MakePoint</li>
+                <li><strong>访问函数：</strong>ST_X、ST_Y、ST_AsText</li>
+                <li><strong>关系函数：</strong>ST_Intersects、ST_Contains、ST_Within</li>
+                <li><strong>分析函数：</strong>ST_Buffer、ST_Union、ST_Intersection</li>
+                <li><strong>测量函数：</strong>ST_Distance、ST_Area、ST_Length</li>
+            </ul>
+            
+            <h3>空间查询示例</h3>
+            <div class="code-block">
+-- 查找500米内的所有POI
+SELECT name, ST_Distance(geom, 
+  ST_GeomFromText('POINT(116.4 39.9)', 4326)) AS distance
+FROM pois
+WHERE ST_DWithin(
+  geom::geography, 
+  ST_GeomFromText('POINT(116.4 39.9)', 4326)::geography, 
+  500
+)
+ORDER BY distance;
+
+-- 空间连接查询
+SELECT c.name, p.province_name
+FROM cities c
+JOIN provinces p ON ST_Within(c.geom, p.geom);
+            </div>
+        </div>
+    </div>
+
+    <!-- 第24页：3.7 PostgreSQL调优 -->
+    <div class="slide">
+        <div class="slide-number">24/60</div>
+        <div class="slide-title">
+            <h2>3.7 PostgreSQL调优</h2>
+        </div>
+        <div class="slide-content">
+            <h3>内存参数优化</h3>
+            <div class="code-block">
+# postgresql.conf
+shared_buffers = 25% of RAM          # 共享缓冲区
+effective_cache_size = 75% of RAM    # 有效缓存大小
+work_mem = RAM / max_connections / 2  # 工作内存
+maintenance_work_mem = RAM / 16       # 维护工作内存
+            </div>
+            
+            <h3>空间查询优化</h3>
+            <ul>
+                <li>使用ST_Subdivide分割大型几何对象</li>
+                <li>避免在WHERE子句中使用函数</li>
+                <li>使用EXPLAIN ANALYZE分析查询计划</li>
+                <li>定期执行VACUUM和ANALYZE</li>
+            </ul>
+            
+            <h3>连接池配置</h3>
+            <div class="code-block">
+# 使用PgBouncer连接池
+max_connections = 200
+default_pool_size = 25
+reserve_pool_size = 5
+            </div>
+        </div>
+    </div>
+
+    <!-- 第25页：第四章标题页 -->
+    <div class="slide">
+        <div class="slide-number">25/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center;">
+            <div>
+                <h1>第四章</h1>
+                <h2 style="color: white; margin-top: 30px;">Spring Boot介绍</h2>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第26页：4.1 Spring的历史 -->
+    <div class="slide">
+        <div class="slide-number">26/60</div>
+        <div class="slide-title">
+            <h2>4.1 Spring的历史</h2>
+        </div>
+        <div class="slide-content">
+            <h3>Spring框架演进</h3>
+            <ul>
+                <li><strong>2003年：</strong>Spring 1.0发布，轻量级J2EE替代方案</li>
+                <li><strong>2006年：</strong>Spring 2.0，支持注解配置</li>
+                <li><strong>2009年：</strong>Spring 3.0，全面支持Java 5+</li>
+                <li><strong>2013年：</strong>Spring 4.0，支持Java 8、WebSocket</li>
+                <li><strong>2014年：</strong>Spring Boot 1.0，简化Spring开发</li>
+                <li><strong>2017年：</strong>Spring 5.0，响应式编程支持</li>
+                <li><strong>2018年：</strong>Spring Boot 2.0，基于Spring 5</li>
+            </ul>
+            
+            <h3>Spring Boot的诞生</h3>
+            <p>Spring Boot旨在简化Spring应用的创建、开发和部署过程，通过约定优于配置的理念，让开发者能够快速构建生产级别的Spring应用。</p>
+            
+            <h3>核心理念</h3>
+            <ul>
+                <li>开箱即用，快速启动</li>
+                <li>嵌入式服务器，无需部署WAR</li>
+                <li>自动配置，减少样板代码</li>
+                <li>生产就绪特性</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第27页：4.2 Spring Boot自动配置与注解 -->
+    <div class="slide">
+        <div class="slide-number">27/60</div>
+        <div class="slide-title">
+            <h2>4.2 Spring Boot自动配置与注解</h2>
+        </div>
+        <div class="slide-content">
+            <h3>自动配置原理</h3>
+            <ul>
+                <li>@SpringBootApplication = @Configuration + @EnableAutoConfiguration + @ComponentScan</li>
+                <li>spring.factories文件定义自动配置类</li>
+                <li>条件注解控制配置生效：@ConditionalOnClass、@ConditionalOnProperty</li>
+            </ul>
+            
+            <h3>常用注解</h3>
+            <div class="code-block">
+@RestController  // REST控制器
+@RequestMapping("/api/maps")
+public class MapController {
+    
+    @Autowired  // 依赖注入
+    private MapService mapService;
+    
+    @GetMapping("/{id}")  // GET请求映射
+    public Map findById(@PathVariable Long id) {
+        return mapService.findById(id);
+    }
+    
+    @PostMapping  // POST请求映射
+    public Map create(@RequestBody Map map) {
+        return mapService.save(map);
+    }
+}
+            </div>
+        </div>
+    </div>
+
+    <!-- 第28页：4.3 开发第一个Spring Boot应用 -->
+    <div class="slide">
+        <div class="slide-number">28/60</div>
+        <div class="slide-title">
+            <h2>4.3 开发第一个Spring Boot应用</h2>
+        </div>
+        <div class="slide-content">
+            <h3>项目结构</h3>
+            <div class="code-block">
+gis-server/
+├── src/main/java/
+│   └── com/example/gis/
+│       ├── GisServerApplication.java
+│       ├── controller/
+│       ├── service/
+│       └── repository/
+├── src/main/resources/
+│   ├── application.yml
+│   └── static/
+└── pom.xml
+            </div>
+            
+            <h3>主程序类</h3>
+            <div class="code-block">
+@SpringBootApplication
+public class GisServerApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(GisServerApplication.class, args);
+    }
+}
+            </div>
+            
+            <h3>配置文件</h3>
+            <div class="code-block">
+# application.yml
+server:
+  port: 8080
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/gisdb
+    username: postgres
+    password: postgres
+            </div>
+        </div>
+    </div>
+
+    <!-- 第29页：4.4 测试你的Spring Boot应用 -->
+    <div class="slide">
+        <div class="slide-number">29/60</div>
+        <div class="slide-title">
+            <h2>4.4 测试你的Spring Boot应用</h2>
+        </div>
+        <div class="slide-content">
+            <h3>测试类型</h3>
+            <ul>
+                <li>单元测试：测试单个组件</li>
+                <li>集成测试：测试多个组件协作</li>
+                <li>Web层测试：测试REST API</li>
+                <li>数据层测试：测试数据访问</li>
+            </ul>
+            
+            <h3>测试示例</h3>
+            <div class="code-block">
+@SpringBootTest
+@AutoConfigureMockMvc
+class MapControllerTest {
+    
+    @Autowired
+    private MockMvc mockMvc;
+    
+    @Test
+    void testGetMap() throws Exception {
+        mockMvc.perform(get("/api/maps/1"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.name").exists());
+    }
+}
+            </div>
+            
+            <h3>测试最佳实践</h3>
+            <ul>
+                <li>使用@MockBean模拟依赖</li>
+                <li>使用TestContainers测试数据库</li>
+                <li>分层测试，隔离关注点</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第30页：4.5 Spring Boot的日志 -->
+    <div class="slide">
+        <div class="slide-number">30/60</div>
+        <div class="slide-title">
+            <h2>4.5 Spring Boot的日志</h2>
+        </div>
+        <div class="slide-content">
+            <h3>日志框架</h3>
+            <p>Spring Boot默认使用Logback作为日志实现，通过SLF4J提供统一的日志接口。</p>
+            
+            <h3>日志配置</h3>
+            <div class="code-block">
+# application.yml
+logging:
+  level:
+    root: INFO
+    com.example.gis: DEBUG
+    org.hibernate.SQL: DEBUG
+  file:
+    name: logs/gis-server.log
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+            </div>
+            
+            <h3>代码中使用日志</h3>
+            <div class="code-block">
+@Slf4j  // Lombok注解
+@Service
+public class MapService {
+    
+    public void processMap(Long id) {
+        log.debug("Processing map with id: {}", id);
+        try {
+            // 业务逻辑
+            log.info("Map processed successfully");
+        } catch (Exception e) {
+            log.error("Error processing map", e);
+        }
+    }
+}
+            </div>
+        </div>
+    </div>
+
+    <!-- 第31页：4.6 部署Spring Boot -->
+    <div class="slide">
+        <div class="slide-number">31/60</div>
+        <div class="slide-title">
+            <h2>4.6 部署Spring Boot</h2>
+        </div>
+        <div class="slide-content">
+            <h3>部署方式</h3>
+            <ul>
+                <li>JAR部署：内嵌Tomcat，直接运行</li>
+                <li>WAR部署：部署到外部应用服务器</li>
+                <li>Docker部署：容器化部署</li>
+                <li>云平台部署：AWS、阿里云等</li>
+            </ul>
+            
+            <h3>Docker部署示例</h3>
+            <div class="code-block">
+# Dockerfile
+FROM openjdk:11-jre-slim
+COPY target/gis-server.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/app.jar"]
+
+# 构建镜像
+docker build -t gis-server:1.0 .
+
+# 运行容器
+docker run -d -p 8080:8080 \
+  --name gis-server \
+  --link postgis:db \
+  gis-server:1.0
+            </div>
+            
+            <h3>生产环境配置</h3>
+            <ul>
+                <li>外部化配置</li>
+                <li>健康检查端点</li>
+                <li>性能监控</li>
+                <li>优雅停机</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第32页：第五章标题页 -->
+    <div class="slide">
+        <div class="slide-number">32/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center;">
+            <div>
+                <h1>第五章</h1>
+                <h2 style="color: white; margin-top: 30px;">Spring Data JPA</h2>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第33页：5.1 Spring Data与JPA -->
+    <div class="slide">
+        <div class="slide-number">33/60</div>
+        <div class="slide-title">
+            <h2>5.1 Spring Data与JPA</h2>
+        </div>
+        <div class="slide-content">
+            <h3>什么是JPA？</h3>
+            <p>Java Persistence API (JPA) 是Java的ORM标准规范，用于管理关系数据的持久化。</p>
+            
+            <h3>Spring Data JPA优势</h3>
+            <ul>
+                <li>简化数据访问层开发</li>
+                <li>自动实现Repository接口</li>
+                <li>强大的查询方法命名规则</li>
+                <li>支持分页、排序、审计</li>
+            </ul>
+            
+            <h3>Repository继承体系</h3>
+            <div class="code-block">
+Repository<T, ID>
+  └── CrudRepository<T, ID>
+      └── PagingAndSortingRepository<T, ID>
+          └── JpaRepository<T, ID>
+              └── 自定义Repository
+            </div>
+            
+            <h3>基本使用</h3>
+            <div class="code-block">
+public interface MapRepository extends JpaRepository<Map, Long> {
+    List<Map> findByName(String name);
+    List<Map> findByTypeAndStatus(String type, String status);
+}
+            </div>
+        </div>
+    </div>
+
+    <!-- 第34页：5.2 Hibernate与Hibernate Spatial -->
+    <div class="slide">
+        <div class="slide-number">34/60</div>
+        <div class="slide-title">
+            <h2>5.2 Hibernate与Hibernate Spatial</h2>
+        </div>
+        <div class="slide-content">
+            <h3>Hibernate Spatial介绍</h3>
+            <p>Hibernate Spatial是Hibernate的地理空间数据扩展，提供了对空间数据类型的支持。</p>
+            
+            <h3>配置Hibernate Spatial</h3>
+            <div class="code-block">
+<!-- pom.xml -->
+<dependency>
+    <groupId>org.hibernate</groupId>
+    <artifactId>hibernate-spatial</artifactId>
+</dependency>
+
+# application.yml
+spring:
+  jpa:
+    properties:
+      hibernate:
+        dialect: org.hibernate.spatial.dialect.postgis.PostgisDialect
+            </div>
+            
+            <h3>空间实体定义</h3>
+            <div class="code-block">
+@Entity
+public class Location {
+    @Id
+    @GeneratedValue
+    private Long id;
+    
+    private String name;
+    
+    @Column(columnDefinition = "geometry(Point,4326)")
+    private Point coordinate;
+    
+    @Column(columnDefinition = "geometry(Polygon,4326)")
+    private Polygon boundary;
+}
+            </div>
+        </div>
+    </div>
+
+    <!-- 第35页：5.3 JPA注解 -->
+    <div class="slide">
+        <div class="slide-number">35/60</div>
+        <div class="slide-title">
+            <h2>5.3 JPA注解</h2>
+        </div>
+        <div class="slide-content">
+            <h3>实体注解</h3>
+            <div class="code-block">
+@Entity
+@Table(name = "maps")
+@EntityListeners(AuditingEntityListener.class)
+public class Map {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(nullable = false, length = 100)
+    private String name;
+    
+    @Enumerated(EnumType.STRING)
+    private MapType type;
+    
+    @Temporal(TemporalType.TIMESTAMP)
+    private Date createTime;
+    
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    private User creator;
+    
+    @OneToMany(mappedBy = "map", cascade = CascadeType.ALL)
+    private List<Layer> layers;
+}
+            </div>
+            
+            <h3>审计注解</h3>
+            <ul>
+                <li>@CreatedDate：创建时间</li>
+                <li>@LastModifiedDate：修改时间</li>
+                <li>@CreatedBy：创建人</li>
+                <li>@LastModifiedBy：修改人</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第36页：5.4 注解式查询 -->
+    <div class="slide">
+        <div class="slide-number">36/60</div>
+        <div class="slide-title">
+            <h2>5.4 注解式查询</h2>
+        </div>
+        <div class="slide-content">
+            <h3>查询方法命名规则</h3>
+            <div class="code-block">
+public interface LocationRepository extends JpaRepository<Location, Long> {
+    // 基本查询
+    List<Location> findByName(String name);
+    List<Location> findByNameContaining(String keyword);
+    List<Location> findByTypeIn(List<String> types);
+    
+    // 空间查询（需要@Query）
+    @Query("SELECT l FROM Location l WHERE within(l.coordinate, :polygon) = true")
+    List<Location> findWithinPolygon(@Param("polygon") Polygon polygon);
+    
+    @Query(value = "SELECT * FROM location WHERE ST_DWithin(coordinate, :point, :distance)", 
+           nativeQuery = true)
+    List<Location> findNearby(@Param("point") Point point, @Param("distance") double distance);
+}
+            </div>
+            
+            <h3>分页查询</h3>
+            <div class="code-block">
+Page<Location> findByType(String type, Pageable pageable);
+
+// 使用
+Pageable pageable = PageRequest.of(0, 10, Sort.by("name"));
+Page<Location> page = repository.findByType("POI", pageable);
+            </div>
+        </div>
+    </div>
+
+    <!-- 第37页：5.5 声明式事务 -->
+    <div class="slide">
+        <div class="slide-number">37/60</div>
+        <div class="slide-title">
+            <h2>5.5 声明式事务</h2>
+        </div>
+        <div class="slide-content">
+            <h3>事务注解</h3>
+            <div class="code-block">
+@Service
+@Transactional(readOnly = true)
+public class MapService {
+    
+    @Autowired
+    private MapRepository mapRepository;
+    
+    // 只读事务
+    public List<Map> findAll() {
+        return mapRepository.findAll();
+    }
+    
+    // 读写事务
+    @Transactional
+    public Map save(Map map) {
+        return mapRepository.save(map);
+    }
+    
+    // 事务传播和隔离级别
+    @Transactional(
+        propagation = Propagation.REQUIRED,
+        isolation = Isolation.READ_COMMITTED,
+        timeout = 30,
+        rollbackFor = Exception.class
+    )
+    public void complexOperation() {
+        // 复杂业务逻辑
+    }
+}
+            </div>
+            
+            <h3>事务最佳实践</h3>
+            <ul>
+                <li>Service层使用事务，Controller层不使用</li>
+                <li>只读操作使用readOnly=true</li>
+                <li>合理设置事务边界</li>
+                <li>避免长事务</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第38页：实现篇标题页 -->
+    <div class="slide">
+        <div class="slide-number">38/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">
+            <div>
+                <h1>实现篇</h1>
+                <p style="font-size: 1.5em; margin-top: 30px;">构建完整的GIS服务</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第39页：第六章标题页 -->
+    <div class="slide">
+        <div class="slide-number">39/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center;">
+            <div>
+                <h1>第六章</h1>
+                <h2 style="color: white; margin-top: 30px;">空间数据存储</h2>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第40页：6.1 矢量数据 -->
+    <div class="slide">
+        <div class="slide-number">40/60</div>
+        <div class="slide-title">
+            <h2>6.1 矢量数据</h2>
+        </div>
+        <div class="slide-content">
+            <h3>6.1.1 Shapefile矢量数据文件</h3>
+            <ul>
+                <li>Shapefile组成：.shp(几何)、.shx(索引)、.dbf(属性)、.prj(投影)</li>
+                <li>使用GeoTools读取Shapefile</li>
+            </ul>
+            <div class="code-block">
+File file = new File("data/cities.shp");
+FileDataStore store = FileDataStoreFinder.getDataStore(file);
+SimpleFeatureSource featureSource = store.getFeatureSource();
+            </div>
+            
+            <h3>6.1.2 PostGIS矢量数据表</h3>
+            <div class="code-block">
+-- 创建矢量数据表
+CREATE TABLE vector_layers (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255),
+    type VARCHAR(50),
+    geom GEOMETRY,
+    properties JSONB
+);
+
+-- 插入数据
+INSERT INTO vector_layers (name, type, geom, properties)
+VALUES ('北京市', 'city', 
+    ST_GeomFromText('POINT(116.4 39.9)', 4326),
+    '{"population": 2154, "area": 16410}'::jsonb
+);
+            </div>
+        </div>
+    </div>
+
+    <!-- 第41页：6.2 栅格数据 -->
+    <div class="slide">
+        <div class="slide-number">41/60</div>
+        <div class="slide-title">
+            <h2>6.2 栅格数据</h2>
+        </div>
+        <div class="slide-content">
+            <h3>6.2.1 GeoTiff数据</h3>
+            <ul>
+                <li>GeoTiff：带地理坐标信息的TIFF格式</li>
+                <li>支持多波段、金字塔、压缩</li>
+            </ul>
+            
+            <h3>6.2.2 IMG数据</h3>
+            <ul>
+                <li>ERDAS IMAGINE格式</li>
+                <li>支持大数据量影像存储</li>
+            </ul>
+            
+            <h3>PostGIS Raster存储</h3>
+            <div class="code-block">
+-- 导入栅格数据
+raster2pgsql -s 4326 -I -C -M elevation.tif public.elevation | psql -d gisdb
+
+-- 查询栅格元数据
+SELECT 
+    ST_Width(rast) as width,
+    ST_Height(rast) as height,
+    ST_NumBands(rast) as bands
+FROM elevation
+WHERE rid = 1;
+            </div>
+        </div>
+    </div>
+
+    <!-- 第42页：6.3 三维模型数据 -->
+    <div class="slide">
+        <div class="slide-number">42/60</div>
+        <div class="slide-title">
+            <h2>6.3 三维模型数据</h2>
+        </div>
+        <div class="slide-content">
+            <h3>6.3.1 单体三维模型</h3>
+            <ul>
+                <li>格式：OBJ、FBX、GLTF、3DS</li>
+                <li>存储：文件系统 + 数据库索引</li>
+            </ul>
+            
+            <h3>6.3.2 3D Tiles</h3>
+            <ul>
+                <li>OGC标准的三维瓦片格式</li>
+                <li>支持大规模三维场景流式加载</li>
+                <li>层次细节（LOD）优化</li>
+            </ul>
+            
+            <h3>6.3.3 I3S (Indexed 3D Scene)</h3>
+            <ul>
+                <li>ESRI的三维场景标准</li>
+                <li>支持点云、网格、建筑物</li>
+                <li>优化的网络传输</li>
+            </ul>
+            
+            <div class="code-block">
+// 3D Tiles元数据存储
+CREATE TABLE tiles_3d (
+    id SERIAL PRIMARY KEY,
+    tileset_id INTEGER,
+    level INTEGER,
+    x INTEGER, y INTEGER, z INTEGER,
+    content_url VARCHAR(500),
+    bounding_volume JSONB
+);
+            </div>
+        </div>
+    </div>
+
+    <!-- 第43页：6.4 瓦片数据 -->
+    <div class="slide">
+        <div class="slide-number">43/60</div>
+        <div class="slide-title">
+            <h2>6.4 瓦片数据</h2>
+        </div>
+        <div class="slide-content">
+            <h3>6.4.1 栅格瓦片</h3>
+            <ul>
+                <li>格式：PNG、JPEG、WebP</li>
+                <li>组织方式：XYZ、TMS、WMTS</li>
+                <li>存储策略：文件系统、对象存储、MBTiles</li>
+            </ul>
+            
+            <h3>6.4.2 矢量瓦片</h3>
+            <ul>
+                <li>格式：Mapbox Vector Tile (MVT)</li>
+                <li>优势：体积小、样式灵活、高DPI支持</li>
+            </ul>
+            
+            <h3>瓦片生成与存储</h3>
+            <div class="code-block">
+// 瓦片元数据表
+CREATE TABLE tiles (
+    zoom_level INTEGER,
+    tile_column INTEGER,
+    tile_row INTEGER,
+    tile_data BYTEA,
+    PRIMARY KEY (zoom_level, tile_column, tile_row)
+);
+
+// 瓦片URL规则
+// 栅格瓦片: /tiles/{z}/{x}/{y}.png
+// 矢量瓦片: /tiles/{z}/{x}/{y}.pbf
+            </div>
+        </div>
+    </div>
+
+    <!-- 第44页：第七章标题页 -->
+    <div class="slide">
+        <div class="slide-number">44/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center;">
+            <div>
+                <h1>第七章</h1>
+                <h2 style="color: white; margin-top: 30px;">OGC地图服务</h2>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第45页：7.1 WMS地图服务 -->
+    <div class="slide">
+        <div class="slide-number">45/60</div>
+        <div class="slide-title">
+            <h2>7.1 WMS地图服务</h2>
+        </div>
+        <div class="slide-content">
+            <h3>7.1.1 WMS接口规范</h3>
+            <ul>
+                <li>GetCapabilities：获取服务元数据</li>
+                <li>GetMap：获取地图图片</li>
+                <li>GetFeatureInfo：获取要素信息</li>
+            </ul>
+            
+            <h3>7.1.2 WMS的实现</h3>
+            <div class="code-block">
+@RestController
+@RequestMapping("/wms")
+public class WMSController {
+    
+    @GetMapping
+    public ResponseEntity<?> handleWMSRequest(
+        @RequestParam String request,
+        @RequestParam(required = false) String layers,
+        @RequestParam(required = false) String bbox,
+        @RequestParam(required = false) Integer width,
+        @RequestParam(required = false) Integer height) {
+        
+        switch (request.toUpperCase()) {
+            case "GETCAPABILITIES":
+                return getCapabilities();
+            case "GETMAP":
+                return getMap(layers, bbox, width, height);
+            default:
+                throw new WMSException("Invalid request");
+        }
+    }
+}
+            </div>
+        </div>
+    </div>
+
+    <!-- 第46页：7.2 WMTS地图服务 -->
+    <div class="slide">
+        <div class="slide-number">46/60</div>
+        <div class="slide-title">
+            <h2>7.2 WMTS地图服务</h2>
+        </div>
+        <div class="slide-content">
+            <h3>WMTS特点</h3>
+            <ul>
+                <li>预生成瓦片，性能更好</li>
+                <li>标准化的瓦片矩阵集</li>
+                <li>RESTful和KVP两种访问方式</li>
+            </ul>
+            
+            <h3>瓦片矩阵定义</h3>
+            <div class="code-block">
+<TileMatrixSet>
+    <Identifier>EPSG:4326</Identifier>
+    <SupportedCRS>urn:ogc:def:crs:EPSG::4326</SupportedCRS>
+    <TileMatrix>
+        <Identifier>0</Identifier>
+        <ScaleDenominator>559082264.029</ScaleDenominator>
+        <TopLeftCorner>90 -180</TopLeftCorner>
+        <TileWidth>256</TileWidth>
+        <TileHeight>256</TileHeight>
+        <MatrixWidth>2</MatrixWidth>
+        <MatrixHeight>1</MatrixHeight>
+    </TileMatrix>
+</TileMatrixSet>
+            </div>
+            
+            <h3>RESTful接口</h3>
+            <p>/wmts/{layer}/{style}/{tilematrixset}/{tilematrix}/{tilerow}/{tilecol}.{format}</p>
+        </div>
+    </div>
+
+    <!-- 第47页：7.3 TMS地图服务 -->
+    <div class="slide">
+        <div class="slide-number">47/60</div>
+        <div class="slide-title">
+            <h2>7.3 TMS地图服务</h2>
+        </div>
+        <div class="slide-content">
+            <h3>TMS规范</h3>
+            <ul>
+                <li>Tile Map Service，OSGeo制定的瓦片服务规范</li>
+                <li>简单的REST风格接口</li>
+                <li>Y轴坐标与XYZ相反（从下往上）</li>
+            </ul>
+            
+            <h3>TMS实现</h3>
+            <div class="code-block">
+@RestController
+@RequestMapping("/tms/1.0.0")
+public class TMSController {
+    
+    @GetMapping("/{layer}/{z}/{x}/{y}.{format}")
+    public ResponseEntity<byte[]> getTile(
+        @PathVariable String layer,
+        @PathVariable int z,
+        @PathVariable int x,
+        @PathVariable int y,
+        @PathVariable String format) {
+        
+        // TMS Y坐标转换
+        int tmsY = (1 << z) - y - 1;
+        
+        byte[] tileData = tileService.getTile(layer, z, x, tmsY);
+        
+        return ResponseEntity.ok()
+            .contentType(getMediaType(format))
+            .body(tileData);
+    }
+}
+            </div>
+        </div>
+    </div>
+
+    <!-- 第48页：7.4 WFS地图服务 -->
+    <div class="slide">
+        <div class="slide-number">48/60</div>
+        <div class="slide-title">
+            <h2>7.4 WFS地图服务</h2>
+        </div>
+        <div class="slide-content">
+            <h3>WFS操作</h3>
+            <ul>
+                <li>GetCapabilities：服务元数据</li>
+                <li>DescribeFeatureType：要素类型描述</li>
+                <li>GetFeature：获取要素数据</li>
+                <li>Transaction：要素编辑（WFS-T）</li>
+            </ul>
+            
+            <h3>GetFeature实现</h3>
+            <div class="code-block">
+@PostMapping("/wfs")
+public FeatureCollection getFeatures(@RequestBody WFSRequest request) {
+    // 构建查询
+    Query query = new Query(request.getTypeName());
+    
+    // 添加过滤条件
+    if (request.getFilter() != null) {
+        Filter filter = CQL.toFilter(request.getFilter());
+        query.setFilter(filter);
+    }
+    
+    // 设置返回属性
+    if (request.getPropertyNames() != null) {
+        query.setPropertyNames(request.getPropertyNames());
+    }
+    
+    // 执行查询
+    return featureService.query(query);
+}
+            </div>
+        </div>
+    </div>
+
+    <!-- 第49页：第八章标题页 -->
+    <div class="slide">
+        <div class="slide-number">49/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center;">
+            <div>
+                <h1>第八章</h1>
+                <h2 style="color: white; margin-top: 30px;">地理编码</h2>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第50页：8.1 地理编码的数据基础 -->
+    <div class="slide">
+        <div class="slide-number">50/60</div>
+        <div class="slide-title">
+            <h2>8.1 地理编码的数据基础</h2>
+        </div>
+        <div class="slide-content">
+            <h3>地址数据模型</h3>
+            <div class="code-block">
+CREATE TABLE addresses (
+    id SERIAL PRIMARY KEY,
+    country VARCHAR(50),
+    province VARCHAR(50),
+    city VARCHAR(50),
+    district VARCHAR(50),
+    street VARCHAR(100),
+    house_number VARCHAR(20),
+    postal_code VARCHAR(10),
+    location GEOMETRY(Point, 4326),
+    full_address TEXT,
+    address_tokens tsvector
+);
+
+-- 创建全文搜索索引
+CREATE INDEX idx_address_tokens ON addresses USING gin(address_tokens);
+            </div>
+            
+            <h3>地址标准化</h3>
+            <ul>
+                <li>地址分词：省、市、区、街道、门牌号</li>
+                <li>别名处理：北京市 = 北京</li>
+                <li>缩写处理：路 = Rd, 街 = St</li>
+                <li>拼音支持：beijing = 北京</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第51页：8.2 地理编码的实现 -->
+    <div class="slide">
+        <div class="slide-number">51/60</div>
+        <div class="slide-title">
+            <h2>8.2 地理编码的实现</h2>
+        </div>
+        <div class="slide-content">
+            <h3>地理编码服务</h3>
+            <div class="code-block">
+@Service
+public class GeocodingService {
+    
+    public GeocodingResult geocode(String address) {
+        // 1. 地址标准化
+        StandardizedAddress std = standardize(address);
+        
+        // 2. 分级匹配
+        List<AddressMatch> matches = new ArrayList<>();
+        
+        // 精确匹配
+        matches.addAll(exactMatch(std));
+        
+        // 模糊匹配
+        if (matches.isEmpty()) {
+            matches.addAll(fuzzyMatch(std));
+        }
+        
+        // 3. 评分排序
+        return matches.stream()
+            .sorted((a, b) -> Double.compare(b.getScore(), a.getScore()))
+            .findFirst()
+            .map(this::toResult)
+            .orElse(null);
+    }
+}
+            </div>
+            
+            <h3>匹配算法</h3>
+            <ul>
+                <li>编辑距离（Levenshtein Distance）</li>
+                <li>Jaccard相似度</li>
+                <li>TF-IDF权重</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第52页：8.3 逆地理编码的实现 -->
+    <div class="slide">
+        <div class="slide-number">52/60</div>
+        <div class="slide-title">
+            <h2>8.3 逆地理编码的实现</h2>
+        </div>
+        <div class="slide-content">
+            <h3>逆地理编码流程</h3>
+            <ul>
+                <li>1. 空间查询最近的POI</li>
+                <li>2. 查询所属行政区划</li>
+                <li>3. 构建结构化地址</li>
+                <li>4. 返回格式化结果</li>
+            </ul>
+            
+            <h3>实现代码</h3>
+            <div class="code-block">
+@Service
+public class ReverseGeocodingService {
+    
+    public Address reverseGeocode(double lon, double lat) {
+        Point point = geometryFactory.createPoint(new Coordinate(lon, lat));
+        
+        // 查找最近的地址点
+        String sql = """
+            SELECT *, ST_Distance(location::geography, :point::geography) as distance
+            FROM addresses
+            WHERE ST_DWithin(location::geography, :point::geography, 1000)
+            ORDER BY distance
+            LIMIT 1
+        """;
+        
+        Address nearest = jdbcTemplate.queryForObject(sql, 
+            Map.of("point", point), new AddressRowMapper());
+            
+        // 查询行政区划
+        AdminDivision division = findAdminDivision(point);
+        
+        return mergeAddressInfo(nearest, division);
+    }
+}
+            </div>
+        </div>
+    </div>
+
+    <!-- 第53页：第九章标题页 -->
+    <div class="slide">
+        <div class="slide-number">53/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center;">
+            <div>
+                <h1>第九章</h1>
+                <h2 style="color: white; margin-top: 30px;">网络分析</h2>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第54页：9.1 图论基础 -->
+    <div class="slide">
+        <div class="slide-number">54/60</div>
+        <div class="slide-title">
+            <h2>9.1 图论基础</h2>
+        </div>
+        <div class="slide-content">
+            <h3>路网数据模型</h3>
+            <div class="code-block">
+-- 节点表
+CREATE TABLE network_nodes (
+    id SERIAL PRIMARY KEY,
+    geom GEOMETRY(Point, 4326)
+);
+
+-- 边表
+CREATE TABLE network_edges (
+    id SERIAL PRIMARY KEY,
+    source_node INTEGER REFERENCES network_nodes(id),
+    target_node INTEGER REFERENCES network_nodes(id),
+    length DOUBLE PRECISION,
+    cost DOUBLE PRECISION,
+    reverse_cost DOUBLE PRECISION,
+    geom GEOMETRY(LineString, 4326)
+);
+
+-- 创建拓扑
+SELECT pgr_createTopology('network_edges', 0.0001, 'geom', 'id');
+            </div>
+            
+            <h3>图的表示</h3>
+            <ul>
+                <li>邻接矩阵：适合稠密图</li>
+                <li>邻接表：适合稀疏图（路网）</li>
+                <li>边列表：适合动态图</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第55页：9.2 dijkstra最短路径 -->
+    <div class="slide">
+        <div class="slide-number">55/60</div>
+        <div class="slide-title">
+            <h2>9.2 Dijkstra最短路径</h2>
+        </div>
+        <div class="slide-content">
+            <h3>算法实现</h3>
+            <div class="code-block">
+public class DijkstraAlgorithm {
+    
+    public Path findShortestPath(Graph graph, Node start, Node end) {
+        Map<Node, Double> distances = new HashMap<>();
+        Map<Node, Node> previous = new HashMap<>();
+        PriorityQueue<NodeDistance> queue = new PriorityQueue<>();
+        
+        // 初始化
+        for (Node node : graph.getNodes()) {
+            distances.put(node, Double.MAX_VALUE);
+        }
+        distances.put(start, 0.0);
+        queue.offer(new NodeDistance(start, 0.0));
+        
+        // 主循环
+        while (!queue.isEmpty()) {
+            Node current = queue.poll().node;
+            
+            if (current.equals(end)) break;
+            
+            for (Edge edge : graph.getEdges(current)) {
+                double newDist = distances.get(current) + edge.getCost();
+                if (newDist < distances.get(edge.getTarget())) {
+                    distances.put(edge.getTarget(), newDist);
+                    previous.put(edge.getTarget(), current);
+                    queue.offer(new NodeDistance(edge.getTarget(), newDist));
+                }
+            }
+        }
+        
+        return reconstructPath(previous, start, end);
+    }
+}
+            </div>
+        </div>
+    </div>
+
+    <!-- 第56页：9.3 A*最短路径 -->
+    <div class="slide">
+        <div class="slide-number">56/60</div>
+        <div class="slide-title">
+            <h2>9.3 A*最短路径</h2>
+        </div>
+        <div class="slide-content">
+            <h3>A*算法优势</h3>
+            <ul>
+                <li>启发式搜索，效率更高</li>
+                <li>保证找到最优解（启发函数满足条件）</li>
+                <li>适合有明确目标的路径搜索</li>
+            </ul>
+            
+            <h3>PostGIS中使用pgRouting</h3>
+            <div class="code-block">
+-- A*最短路径查询
+SELECT * FROM pgr_astar(
+    'SELECT id, source, target, cost, reverse_cost, 
+            x1, y1, x2, y2 FROM network_edges',
+    start_node_id,  -- 起点ID
+    end_node_id,    -- 终点ID
+    directed := true
+);
+
+-- 获取完整路径几何
+WITH route AS (
+    SELECT * FROM pgr_astar(...)
+)
+SELECT ST_Union(e.geom) as route_geom, SUM(r.cost) as total_cost
+FROM route r
+JOIN network_edges e ON r.edge = e.id;
+            </div>
+        </div>
+    </div>
+
+    <!-- 第57页：9.4 最大流量算法 -->
+    <div class="slide">
+        <div class="slide-number">57/60</div>
+        <div class="slide-title">
+            <h2>9.4 最大流量算法</h2>
+        </div>
+        <div class="slide-content">
+            <h3>应用场景</h3>
+            <ul>
+                <li>交通流量分析</li>
+                <li>管网容量计算</li>
+                <li>资源分配优化</li>
+                <li>应急疏散规划</li>
+            </ul>
+            
+            <h3>Ford-Fulkerson算法</h3>
+            <div class="code-block">
+-- 使用pgRouting计算最大流
+SELECT * FROM pgr_maxFlow(
+    'SELECT id, source, target, capacity, reverse_capacity 
+     FROM network_edges',
+    source_vertex := 1,
+    sink_vertex := 100
+);
+
+-- 流量分析结果
+SELECT 
+    source, 
+    target, 
+    flow,
+    capacity,
+    (flow / capacity) as utilization_rate
+FROM pgr_maxFlow(...) 
+ORDER BY utilization_rate DESC;
+            </div>
+        </div>
+    </div>
+
+    <!-- 第58页：第十章标题页 -->
+    <div class="slide">
+        <div class="slide-number">58/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center;">
+            <div>
+                <h1>第十章</h1>
+                <h2 style="color: white; margin-top: 30px;">空间分析服务</h2>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第59页：10.1 几何分析服务 -->
+    <div class="slide">
+        <div class="slide-number">59/60</div>
+        <div class="slide-title">
+            <h2>10.1 几何分析服务</h2>
+        </div>
+        <div class="slide-content">
+            <h3>基础几何分析</h3>
+            <div class="code-block">
+@Service
+public class GeometryAnalysisService {
+    
+    // 缓冲区分析
+    public Geometry buffer(Geometry geom, double distance) {
+        return geom.buffer(distance);
+    }
+    
+    // 叠加分析
+    public Geometry intersection(Geometry a, Geometry b) {
+        return a.intersection(b);
+    }
+    
+    // 空间关系判断
+    public boolean contains(Geometry a, Geometry b) {
+        return a.contains(b);
+    }
+    
+    // 凸包计算
+    public Geometry convexHull(List<Geometry> geometries) {
+        GeometryCollection gc = geometryFactory.createGeometryCollection(
+            geometries.toArray(new Geometry[0])
+        );
+        return gc.convexHull();
+    }
+}
+            </div>
+            
+            <h3>高级分析功能</h3>
+            <ul>
+                <li>Voronoi图（泰森多边形）</li>
+                <li>Delaunay三角网</li>
+                <li>拓扑简化（Douglas-Peucker）</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 第60页：总结 -->
+    <div class="slide">
+        <div class="slide-number">60/60</div>
+        <div class="slide-title" style="height: 100%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+            <div style="text-align: center;">
+                <h1>课程总结</h1>
+                <div style="margin-top: 50px; font-size: 1.3em;">
+                    <p>✓ 掌握GIS Server的核心概念和技术架构</p>
+                    <p>✓ 学会使用Spring Boot + PostGIS构建GIS服务</p>
+                    <p>✓ 实现OGC标准的地图服务</p>
+                    <p>✓ 完成空间数据存储和分析功能</p>
+                </div>
+                <p style="margin-top: 50px; font-size: 1.5em;">感谢聆听！</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="navigation">
+        <button class="nav-btn" id="prevBtn">上一页</button>
+        <button class="nav-btn" id="nextBtn">下一页</button>
+    </div>
+
+    <script>
+        let currentSlide = 0;
+        const slides = document.querySelectorAll('.slide');
+        const totalSlides = slides.length;
+
+        function showSlide(n) {
+            slides[currentSlide].classList.remove('active');
+            currentSlide = (n + totalSlides) % totalSlides;
+            slides[currentSlide].classList.add('active');
+            
+            document.getElementById('prevBtn').disabled = currentSlide === 0;
+            document.getElementById('nextBtn').disabled = currentSlide === totalSlides - 1;
+        }
+
+        document.getElementById('prevBtn').addEventListener('click', () => {
+            if (currentSlide > 0) showSlide(currentSlide - 1);
+        });
+
+        document.getElementById('nextBtn').addEventListener('click', () => {
+            if (currentSlide < totalSlides - 1) showSlide(currentSlide + 1);
+        });
+
+        // 键盘导航
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft' && currentSlide > 0) {
+                showSlide(currentSlide - 1);
+            } else if (e.key === 'ArrowRight' && currentSlide < totalSlides - 1) {
+                showSlide(currentSlide + 1);
+            }
+        });
+
+        // 初始化
+        showSlide(0);
+        
+        // 初始化地图实例
+        let leafletMap, openlayersMap, mapboxMap, cesiumViewer;
+        
+        function initMaps() {
+            // Leaflet在第12页（索引11）
+            if (currentSlide === 11 && !leafletMap) {
+                setTimeout(() => {
+                    leafletMap = L.map('leafletMap').setView([39.9, 116.4], 10);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors'
+                    }).addTo(leafletMap);
+                    
+                    L.marker([39.9, 116.4]).addTo(leafletMap)
+                        .bindPopup('北京').openPopup();
+                    
+                    L.circle([39.95, 116.35], {
+                        color: 'red',
+                        fillColor: '#f03',
+                        fillOpacity: 0.5,
+                        radius: 5000
+                    }).addTo(leafletMap);
+                    
+                    // 确保地图正确渲染
+                    leafletMap.invalidateSize();
+                }, 100);
+            }
+            
+            // OpenLayers在第13页（索引12）
+            if (currentSlide === 12 && !openlayersMap) {
+                setTimeout(() => {
+                    openlayersMap = new ol.Map({
+                        target: 'openlayersMap',
+                        layers: [
+                            new ol.layer.Tile({
+                                source: new ol.source.OSM()
+                            }),
+                            new ol.layer.Vector({
+                                source: new ol.source.Vector({
+                                    features: [
+                                        new ol.Feature({
+                                            geometry: new ol.geom.Point(
+                                                ol.proj.fromLonLat([116.4, 39.9])
+                                            )
+                                        })
+                                    ]
+                                }),
+                                style: new ol.style.Style({
+                                    image: new ol.style.Circle({
+                                        radius: 8,
+                                        fill: new ol.style.Fill({color: 'red'}),
+                                        stroke: new ol.style.Stroke({
+                                            color: 'white', width: 2
+                                        })
+                                    })
+                                })
+                            })
+                        ],
+                        view: new ol.View({
+                            center: ol.proj.fromLonLat([116.4, 39.9]),
+                            zoom: 10
+                        })
+                    });
+                    
+                    // 添加交互控件
+                    openlayersMap.addControl(new ol.control.FullScreen());
+                    openlayersMap.addControl(new ol.control.ScaleLine());
+                    
+                    // 确保地图正确渲染
+                    openlayersMap.updateSize();
+                }, 100);
+            }
+            
+            // Mapbox GL JS在第14页（索引13）
+            if (currentSlide === 13 && !mapboxMap) {
+                setTimeout(() => {
+                mapboxgl.accessToken = "pk.eyJ1IjoiejM2MjgzMTU2MSIsImEiOiJjajVkaml6Z3EwcDFiMndsZGFxZjFyc3FpIn0.NkyQqYkspi-AtxuR7gkZOg";
+                    mapboxMap = new mapboxgl.Map({
+                        container: 'mapboxMap',
+                        style: {
+                            version: 8,
+                            sources: {
+                                'osm': {
+                                    type: 'raster',
+                                    tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                                    tileSize: 256
+                                }
+                            },
+                            layers: [{
+                                id: 'osm',
+                                type: 'raster',
+                                source: 'osm'
+                            }]
+                        },
+                        center: [116.4, 39.9],
+                        zoom: 10,
+                        pitch: 45
+                    });
+                    
+                    // 添加导航控件
+                    mapboxMap.addControl(new mapboxgl.NavigationControl());
+                    
+                    // 添加标记
+                    new mapboxgl.Marker()
+                        .setLngLat([116.4, 39.9])
+                        .setPopup(new mapboxgl.Popup().setHTML('<h3>北京</h3>'))
+                        .addTo(mapboxMap);
+                    
+                    // 确保地图正确渲染
+                    mapboxMap.resize();
+                }, 100);
+            }
+            
+            // Cesium在第15页（索引14）
+            if (currentSlide === 14 && !cesiumViewer) {
+                setTimeout(async () => {
+                    // 设置Cesium Ion默认访问令牌
+                    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI3NTc3MDIwZi1jYWZjLTRlZmQtYWQ5NS03ZGMyZTIzNmI0NzMiLCJpZCI6NzY3MSwic2NvcGVzIjpbImFzciIsImdjIl0sImlhdCI6MTU1MDEyMzM3Nn0.EjwDkhFd7VspgY1nnClowAH3lutwn6N-bStNMw1xbO4';
+                    
+                    cesiumViewer = new Cesium.Viewer('cesiumContainer', {
+                        imageryProvider: false,
+                        baseLayerPicker: false,
+                        homeButton: false,
+                        sceneModePicker: false,
+                        navigationHelpButton: false,
+                        animation: false,
+                        timeline: false,
+                        fullscreenButton: false,
+                        vrButton: false,
+                        creditContainer: document.createElement('div'),
+                        terrain: Cesium.Terrain.fromWorldTerrain({
+                            requestWaterMask: true,
+                            requestVertexNormals: true
+                        })
+                    });
+                    
+                    // 添加影像
+                    const imageryLayer = Cesium.ImageryLayer.fromProviderAsync(
+                        Cesium.IonImageryProvider.fromAssetId(2)
+                    );
+                    cesiumViewer.imageryLayers.add(imageryLayer);
+                    
+                    cesiumViewer.camera.flyTo({
+                        destination: Cesium.Cartesian3.fromDegrees(116.4, 39.1, 50000),
+                        orientation: {
+                            heading: Cesium.Math.toRadians(0),
+                            pitch: Cesium.Math.toRadians(-45),
+                            roll: 0.0
+                        }
+                    });
+                    
+                    //添加3D建筑物
+                    try {
+                        const osmBuildings= await Cesium.createOsmBuildingsAsync();
+                        cesiumViewer.scene.primitives.add(osmBuildings);
+                    } catch (e) {
+                        console.log('OSM buildings not available');
+                    }
+                }, 100);
+            }
+        }
+        
+        // 修改showSlide函数，在显示新页面时初始化地图
+        const originalShowSlide = showSlide;
+        showSlide = function(n) {
+            originalShowSlide(n);
+            initMaps();
+        };
+    </script>
+    
+    <!-- 
+    注意事项：
+    1. 代码块已设置 white-space: pre-wrap 以正确显示换行
+    2. Leaflet（第12页）、OpenLayers（第13页）、Mapbox GL JS（第14页）、CesiumJS（第15页）均已添加实际地图实例
+    3. 地图在切换到对应页面时自动初始化
+    4. 支持键盘左右箭头导航
+    -->
+</body>
+</html>
